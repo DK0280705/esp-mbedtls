@@ -14,6 +14,33 @@ use embedded_io::{ErrorKind, ErrorType};
 use defmt::{debug, trace, warn, error};
 #[cfg(feature = "log")]
 use log::{debug, warn, error, log, Level};
+#[cfg(not(any(feature = "defmt", feature = "log")))]
+mod defmt {
+    #[macro_export]
+    macro_rules! error {
+        ($($tt:tt)*) => {};
+    }
+    #[macro_export]
+    macro_rules! warn {
+        ($($tt:tt)*) => {};
+    }
+    #[macro_export]
+    macro_rules! info {
+        ($($tt:tt)*) => {};
+    }
+    #[macro_export]
+    macro_rules! debug {
+        ($($tt:tt)*) => {};
+    }
+    #[macro_export]
+    macro_rules! trace {
+        ($($tt:tt)*) => {};
+    }
+    #[macro_export]
+    macro_rules! println {
+        ($($tt:tt)*) => {};
+    }
+}
 
 use embedded_io::Read;
 use embedded_io::Write;
