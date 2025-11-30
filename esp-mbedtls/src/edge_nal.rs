@@ -10,7 +10,8 @@ use crate::{Certificates, Mode, TlsError, TlsReference, TlsVersion};
 use defmt::debug;
 #[cfg(feature = "log")]
 use log::debug;
-
+#[cfg(not(any(feature = "defmt", feature = "log")))]
+use crate::debug;
 
 #[no_mangle]
 unsafe extern "C" fn random() -> core::ffi::c_ulong {
