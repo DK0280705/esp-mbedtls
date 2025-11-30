@@ -6,6 +6,18 @@ use embedded_io::Error;
 use crate::asynch::Session;
 use crate::{Certificates, Mode, TlsError, TlsReference, TlsVersion};
 
+#[cfg(feature = "defmt")]
+use defmt::debug;
+#[cfg(feature = "log")]
+use log::debug;
+
+
+#[no_mangle]
+unsafe extern "C" fn random() -> core::ffi::c_ulong {
+    let rng = esp_hal::rng::Rng::new();
+    rng.random()
+}
+
 /// An implementation of `edge-nal`'s `TcpAccept` trait over TLS.
 pub struct TlsAcceptor<'d, T> {
     acceptor: T,
@@ -59,7 +71,7 @@ where
             .accept()
             .await
             .map_err(|e| TlsError::Io(e.kind()))?;
-        log::debug!("Accepted new connection on socket");
+        debug!("Accepted new connection on socket");
 
         let session = Session::new(
             socket,
@@ -129,7 +141,7 @@ where
             .connect(remote)
             .await
             .map_err(|e| TlsError::Io(e.kind()))?;
-        log::debug!("Connected to {remote}");
+        debug!("Connected to {}", remote);
 
         let session = Session::new(
             socket,

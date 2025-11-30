@@ -10,22 +10,15 @@ use critical_section::Mutex;
 
 use embedded_io::{ErrorKind, ErrorType};
 
-use log::Level;
+#[cfg(feature = "defmt")]
+use defmt::{debug, trace, warn, error};
+#[cfg(feature = "log")]
+use log::{debug, warn, error, log, Level};
 
 use embedded_io::Read;
 use embedded_io::Write;
 
 use esp_mbedtls_sys::bindings::*;
-
-// For `malloc`, `calloc` and `free` which are provided by `esp-wifi` on baremetal
-#[cfg(any(
-    feature = "esp32",
-    feature = "esp32c3",
-    feature = "esp32c6",
-    feature = "esp32s2",
-    feature = "esp32s3"
-))]
-use esp_wifi as _;
 
 #[cfg(feature = "edge-nal")]
 mod edge_nal;
@@ -135,6 +128,7 @@ impl TlsVersion {
 
 /// Error type for TLS operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TlsError {
     /// A `Tls` instance has already been created
     AlreadyCreated,
@@ -764,7 +758,7 @@ where
 
             loop {
                 let res = mbedtls_ssl_handshake(self.ssl_context);
-                log::debug!("mbedtls_ssl_handshake: {res:x}");
+                debug!("mbedtls_ssl_handshake: {:x}", res);
                 if res == 0 {
                     // success
                     break;
@@ -922,7 +916,7 @@ where
 
 impl<T> Drop for Session<'_, T> {
     fn drop(&mut self) {
-        log::debug!("session dropped - freeing memory");
+        debug!("session dropped - freeing memory");
         unsafe {
             mbedtls_ssl_close_notify(self.ssl_context);
             mbedtls_ctr_drbg_free(self.drbg_context);
@@ -1056,7 +1050,7 @@ pub mod asynch {
 
     impl<T> Drop for Session<'_, T> {
         fn drop(&mut self) {
-            log::debug!("session dropped - freeing memory");
+            debug!("session dropped - freeing memory");
             unsafe {
                 mbedtls_ssl_close_notify(self.ssl_context);
                 mbedtls_ctr_drbg_free(self.drbg_context);
@@ -1088,13 +1082,13 @@ pub mod asynch {
         pub async fn connect(&mut self) -> Result<(), TlsError> {
             match self.state {
                 SessionState::Initial => {
-                    log::debug!("Establishing SSL connection");
+                    debug!("Establishing SSL connection");
 
                     self.io(|ssl| unsafe { mbedtls_ssl_handshake(ssl) }).await?;
                     if matches!(self.state, SessionState::Eof) {
                         return Err(TlsError::Eof);
                     }
-                    log::debug!("Establish SSL connection OK");
+                    debug!("Establish SSL connection OK");
                     self.state = SessionState::Connected;
 
                     Ok(())
@@ -1420,7 +1414,7 @@ pub mod asynch {
                 MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET => Ok(PollOutcome::Retry),
                 MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY => Ok(PollOutcome::Eof),
                 res if res < 0 => {
-                    ::log::warn!("MbedTLS error: {res} / {res:x}");
+                    warn!("MbedTLS error: {0} / {0:x}", res);
                     Err(TlsError::MbedTlsError(res))
                 }
                 len => Ok(PollOutcome::Success(len)),
@@ -1428,7 +1422,7 @@ pub mod asynch {
         }
 
         fn send(&mut self, buf: &[u8]) -> i32 {
-            ::log::debug!("Send {}B", buf.len());
+            debug!("Send {}B", buf.len());
 
             if buf.is_empty() {
                 // MbedTLS does not want us to write anything
@@ -1454,7 +1448,7 @@ pub mod asynch {
                             // The stream has reached EOF
                             self.session.state = SessionState::Eof;
                             self.io_result = Some(Err(TlsError::Eof));
-                            ::log::warn!("IO error: EOF");
+                            warn!("IO error: EOF");
                         } else {
                             // The write was successful, indicate so
                             self.io_result = Some(Ok(()));
@@ -1464,7 +1458,7 @@ pub mod asynch {
                     }
                     Err(err) => {
                         // MbedTLS error
-                        ::log::warn!("TCP error: {:?}", err.kind());
+                        warn!("TCP error: {:?}", err.kind());
                         self.io_result = Some(Err(TlsError::Io(err.kind())));
                         MBEDTLS_ERR_SSL_WANT_WRITE
                     }
@@ -1479,7 +1473,7 @@ pub mod asynch {
         }
 
         fn receive(&mut self, buf: &mut [u8]) -> i32 {
-            ::log::debug!("Recv {}B", buf.len());
+            debug!("Recv {}B", buf.len());
 
             if buf.is_empty() {
                 // MbedTLS does not want us to read anything
@@ -1513,7 +1507,7 @@ pub mod asynch {
                             // The stream has reached EOF
                             self.session.state = SessionState::Eof;
                             self.io_result = Some(Err(TlsError::Eof));
-                            ::log::warn!("IO error: EOF");
+                            warn!("IO error: EOF");
                         } else {
                             // The read was successful, indicate so
                             self.io_result = Some(Ok(()));
@@ -1523,7 +1517,7 @@ pub mod asynch {
                     }
                     Err(err) => {
                         // MbedTLS error
-                        ::log::warn!("TCP error: {:?}", err.kind());
+                        warn!("TCP error: {:?}", err.kind());
                         self.io_result = Some(Err(TlsError::Io(err.kind())));
                         MBEDTLS_ERR_SSL_WANT_READ
                     }
@@ -1568,14 +1562,23 @@ unsafe extern "C" fn dbg_print(
     let file = file.to_str().unwrap_or("???").trim();
     let msg = msg.to_str().unwrap_or("???").trim();
 
-    let level = match lvl {
-        0 => Level::Error,
-        1 => Level::Warn,
-        2 => Level::Debug,
-        _ => Level::Trace,
-    };
-
-    log::log!(level, "{} ({}:{}) {}", lvl, file, line, msg);
+    #[cfg(feature = "log")] {
+        let level = match lvl {
+            0 => Level::Error,
+            1 => Level::Warn,
+            2 => Level::Debug,
+            _ => Level::Trace,
+        };
+        log::log!(level, "{} ({}:{}) {}", lvl, file, line, msg);
+    }
+    #[cfg(feature = "defmt")] {
+        match lvl {
+            0 => error!("{} ({}:{}) {}", lvl, file, line, msg),
+            1 => warn!("{} ({}:{}) {}", lvl, file, line, msg),
+            2 => debug!("{} ({}:{}) {}", lvl, file, line, msg),
+            _ => trace!("{} ({}:{}) {}", lvl, file, line, msg),
+        };
+    }
 }
 
 #[no_mangle]
